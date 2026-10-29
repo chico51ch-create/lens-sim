@@ -1,0 +1,589 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>レンズ画角シミュレーター</title>
+<meta name="description" content="センサーサイズ・画面比率・距離・焦点距離・アングル・人数から、人物の写り方をシミュレートします。">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="画角シム">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#eef0f2" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#111518" media="(prefers-color-scheme: dark)">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<style>
+/* Layout: 撮影画面を主役に右に操作パネル。iPhoneでは画面を上部に固定し、その下で設定を操作する */
+:root{
+  --bg:#eef0f2; --panel:#ffffff; --ink:#18212b; --muted:#5d6874; --line:#d5dae0;
+  --accent:#1f6f8b; --accent-ink:#ffffff; --frame:#d99a00; --warn:#b4472c;
+  --scene-wall:#dfe4e9; --scene-floor:#c9d0d7; --scene-grid:rgba(24,33,43,.13);
+  --person:#34404d; --person-edge:#dfe4e9; --shade:rgba(10,14,20,.55);
+  --font-body:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic UI","Noto Sans JP",system-ui,sans-serif;
+  --font-mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){:root{
+  --bg:#111518; --panel:#191e23; --ink:#e4e8ec; --muted:#97a2ad; --line:#2b333b;
+  --accent:#5bb3d1; --accent-ink:#0b1216; --frame:#f2b81c; --warn:#ef8a6c;
+  --scene-wall:#232a31; --scene-floor:#1a2026; --scene-grid:rgba(228,232,236,.10);
+  --person:#aab6c2; --person-edge:#232a31; --shade:rgba(0,0,0,.6); color-scheme:dark}}
+
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--font-body);font-size:14px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));
+  padding-top:calc(20px + env(safe-area-inset-top,0px));padding-bottom:calc(40px + env(safe-area-inset-bottom,0px))}
+button,input,select{touch-action:manipulation}
+[hidden]{display:none!important}
+.wrap{max-width:1180px;margin:0 auto;display:grid;gap:20px}
+header h1{font-size:22px;margin:0;font-weight:700;letter-spacing:.02em;text-wrap:balance}
+header p{margin:4px 0 0;color:var(--muted)}
+
+.main{display:grid;grid-template-columns:minmax(0,1fr) 330px;grid-template-areas:"view panel" "info panel";gap:14px 20px;align-items:start}
+.view{grid-area:view;display:grid;gap:10px;min-width:0}
+.info{grid-area:info;display:grid;gap:14px;min-width:0}
+.panel{grid-area:panel}
+
+@media (max-width:860px){
+  body{padding-top:calc(12px + env(safe-area-inset-top,0px))}
+  body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);background:var(--bg);z-index:10}
+  header h1{font-size:18px}
+  header p{display:none}
+  .wrap{gap:10px}
+  .main{display:flex;flex-direction:column;align-items:stretch;gap:14px}
+  .view{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:var(--bg);padding-block:6px 8px;gap:6px;
+    box-shadow:0 8px 12px -10px rgba(0,0,0,.35)}
+  .view .tabs{display:none}
+  .viewer{padding:6px}
+  .mtabs{display:flex}
+}
+
+.tabs{display:flex;gap:4px;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:3px;width:max-content;max-width:100%}
+.tabs button{border:0;background:transparent;color:var(--muted);font:inherit;font-weight:500;padding:6px 14px;border-radius:6px;cursor:pointer}
+.tabs button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink)}
+.mtabs{display:none;gap:6px;justify-content:center}
+.mtabs button{border:1px solid #39424b;background:transparent;color:#cfd6dc;font:inherit;font-size:12px;padding:3px 12px;border-radius:999px}
+.mtabs button[aria-pressed="true"]{background:#f2b81c;border-color:#f2b81c;color:#111}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+.viewer{background:#0d1014;border-radius:10px;padding:10px;display:grid;gap:8px}
+.canvas-box{position:relative;width:100%;margin:0 auto}
+canvas{display:block;width:100%;height:100%;border-radius:3px}
+.evf{display:flex;flex-wrap:wrap;gap:4px 14px;justify-content:center;font-family:var(--font-mono);font-size:12px;color:#cfd6dc;font-variant-numeric:tabular-nums}
+.evf b{color:#f2b81c;font-weight:600}
+
+.stats{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.stat{background:var(--panel);padding:10px 14px;min-width:0}
+.stat .k{font-size:11px;color:var(--muted);letter-spacing:.06em}
+.stat .v{font-family:var(--font-mono);font-size:16px;font-weight:500;font-variant-numeric:tabular-nums}
+.stat .v small{font-size:12px;color:var(--muted);font-weight:400}
+.stat.hl .v{color:var(--accent)}
+.stat.warn .v{color:var(--warn)}
+
+.diagrams{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px}
+.diag{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px 14px;min-width:0}
+.diag h2{font-size:12px;font-weight:500;color:var(--muted);letter-spacing:.08em;margin:0 0 6px}
+.diag svg{width:100%;height:auto;display:block}
+
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px;display:grid;gap:20px}
+.group{display:grid;gap:16px;padding-top:16px;border-top:1px solid var(--line)}
+.group:first-child{padding-top:0;border-top:0}
+.field{display:grid;gap:8px}
+.field-head{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.field-head label,.field-head .lbl{font-weight:700}
+.num{display:flex;align-items:baseline;gap:4px}
+.num input{width:80px;text-align:right;font-family:var(--font-mono);font-size:18px;font-weight:500;background:transparent;color:var(--ink);border:0;border-bottom:1px solid var(--line);border-radius:0;padding:0 2px;font-variant-numeric:tabular-nums}
+.num span{color:var(--muted);font-size:12px}
+input[type=range]{width:100%;accent-color:var(--accent);height:28px}
+select{width:100%;font:inherit;font-size:16px;padding:8px 10px;border-radius:6px;border:1px solid var(--line);background:var(--bg);color:var(--ink)}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{border:1px solid var(--line);background:transparent;color:var(--ink);font-family:var(--font-mono);font-size:13px;padding:5px 11px;border-radius:999px;cursor:pointer}
+.chip.jp{font-family:var(--font-body)}
+.chip[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.custom{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}
+.custom .num input{width:68px;font-size:16px}
+.seg{display:flex;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.seg button{flex:1;border:0;background:transparent;color:var(--ink);padding:8px 4px;cursor:pointer;font-family:var(--font-mono);font-size:13px}
+.seg button.jp{font-family:var(--font-body)}
+.seg button+button{border-left:1px solid var(--line)}
+.seg button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink)}
+.check{display:flex;gap:8px;align-items:center;color:var(--muted)}
+.note{font-size:12px;color:var(--muted);margin:0}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>レンズ画角シミュレーター</h1>
+    <p>センサーサイズ・距離・焦点距離・アングルから、人物がどのように写るかを確認できます。</p>
+  </header>
+
+  <div class="main">
+    <section class="view" aria-label="プレビュー">
+      <div class="tabs" role="group" aria-label="表示切替">
+        <button id="tab-finder" aria-pressed="true">ファインダー</button>
+        <button id="tab-overview" aria-pressed="false">撮影範囲</button>
+      </div>
+      <div class="viewer">
+        <div class="canvas-box" id="box"><canvas id="cv"></canvas></div>
+        <div class="evf" id="evf"></div>
+        <div class="mtabs" role="group" aria-label="表示切替">
+          <button id="m-finder" aria-pressed="true">ファインダー</button>
+          <button id="m-overview" aria-pressed="false">撮影範囲</button>
+        </div>
+      </div>
+    </section>
+
+    <aside class="panel" aria-label="設定">
+      <div class="group">
+        <div class="field">
+          <div class="field-head"><label for="sensor">センサーサイズ</label></div>
+          <select id="sensor"></select>
+          <div class="custom" id="custom" hidden>
+            <div class="num"><input id="cw" type="number" inputmode="decimal" min="1" max="100" step="0.1" value="36"><span>mm 幅</span></div>
+            <div class="num"><input id="ch" type="number" inputmode="decimal" min="1" max="100" step="0.1" value="24"><span>mm 高さ</span></div>
+          </div>
+        </div>
+        <div class="field">
+          <div class="field-head"><span class="lbl">画面比率</span></div>
+          <div class="seg" role="group" aria-label="画面比率" id="aspects"></div>
+          <div class="seg" role="group" aria-label="カメラの向き">
+            <button class="jp" id="o-land" aria-pressed="true">横位置</button>
+            <button class="jp" id="o-port" aria-pressed="false">縦位置</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="group">
+        <div class="field">
+          <div class="field-head"><label for="focal-n">焦点距離</label>
+            <div class="num"><input id="focal-n" type="number" inputmode="decimal" min="4" max="1200" step="1"><span>mm</span></div></div>
+          <input id="focal" type="range" min="0" max="1000" aria-label="焦点距離スライダー">
+          <div class="chips" id="focal-chips"></div>
+        </div>
+        <div class="field">
+          <div class="field-head"><label for="dist-n">被写体までの距離</label>
+            <div class="num"><input id="dist-n" type="number" inputmode="decimal" min="0.2" max="100" step="0.1"><span>m</span></div></div>
+          <input id="dist" type="range" min="0" max="1000" aria-label="距離スライダー">
+          <div class="chips" id="dist-chips"></div>
+        </div>
+      </div>
+
+      <div class="group">
+        <div class="field">
+          <div class="field-head"><label for="angle-n">アングル</label>
+            <div class="num"><input id="angle-n" type="number" inputmode="decimal" min="0.1" max="20" step="0.05"><span>m カメラ高</span></div></div>
+          <div class="chips" id="angle-chips"></div>
+        </div>
+      </div>
+
+      <div class="group">
+        <div class="field">
+          <div class="field-head"><label for="count-n">人数</label>
+            <div class="num"><input id="count-n" type="number" inputmode="numeric" min="1" max="15" step="1"><span>人</span></div></div>
+          <input id="count" type="range" min="1" max="15" step="1" aria-label="人数スライダー">
+        </div>
+        <div class="field">
+          <div class="field-head"><label for="gap-n">隣の人との間隔</label>
+            <div class="num"><input id="gap-n" type="number" inputmode="decimal" min="0" max="500" step="5"><span>cm</span></div></div>
+          <input id="gap" type="range" min="0" max="200" step="5" aria-label="間隔スライダー">
+          <p class="note">腕の外側どうしのすき間です。0cmで肩が触れる程度になります。</p>
+        </div>
+        <div class="field">
+          <div class="field-head"><label for="height-n">人物の身長</label>
+            <div class="num"><input id="height-n" type="number" inputmode="decimal" min="50" max="220" step="1"><span>cm</span></div></div>
+        </div>
+        <label class="check"><input type="checkbox" id="thirds" checked> 三分割グリッドを表示</label>
+      </div>
+
+      <p class="note">撮影範囲はピント位置での像距離を使ったピンホールモデルで計算しています。画面比率はセンサーの幅いっぱいを使い、上下をクロップする前提です(センサーより縦長の比率では高さいっぱい)。距離はセンサー面から測ります。カメラは人物の並びの中央を狙い、自動でティルトします。設定はこの端末に保存されます。</p>
+    </aside>
+
+    <section class="info" aria-label="計算結果">
+      <div class="stats" id="stats"></div>
+      <div class="diagrams">
+        <div class="diag"><h2>上から見た図</h2><svg id="td" viewBox="0 0 600 200" role="img" aria-label="カメラと人物の位置関係と水平画角"></svg></div>
+        <div class="diag"><h2>横から見た図</h2><svg id="sd" viewBox="0 0 600 200" role="img" aria-label="カメラの高さと垂直画角"></svg></div>
+      </div>
+    </section>
+  </div>
+</div>
+<script>
+const SENSORS=[
+  {id:'gfx',name:'中判 44×33',w:43.8,h:32.9},
+  {id:'ff',name:'フルサイズ 36×24',w:36,h:24},
+  {id:'s35',name:'スーパー35 24.9×18.7',w:24.9,h:18.7},
+  {id:'apsc',name:'APS-C ソニー/ニコン/富士 23.5×15.6',w:23.5,h:15.6},
+  {id:'apscc',name:'APS-C キヤノン 22.3×14.9',w:22.3,h:14.9},
+  {id:'mft',name:'マイクロフォーサーズ 17.3×13',w:17.3,h:13},
+  {id:'1in',name:'1インチ 13.2×8.8',w:13.2,h:8.8},
+  {id:'phone',name:'スマホ 1/1.3型 9.8×7.4',w:9.8,h:7.4},
+  {id:'custom',name:'カスタム',w:36,h:24}
+];
+const ASPECTS=[{id:'16:9',r:16/9},{id:'17:9',r:17/9},{id:'2.35:1',r:2.35},{id:'3:2',r:1.5}];
+const ANGLES=[
+  {id:'low',name:'ローアングル',hf:h=>0.35*h},
+  {id:'eye',name:'アイレベル',hf:h=>0.93*h},
+  {id:'high',name:'ハイアングル',hf:h=>h+0.6},
+  {id:'top',name:'俯瞰',hf:h=>h+2.8}
+];
+const FF_DIAG=Math.hypot(36,24);
+const FOCALS=[14,24,35,50,85,135,200,400];
+const DISTS=[0.5,1,2,3,5,10,20];
+const F_MIN=4,F_MAX=1200,D_MIN=0.2,D_MAX=100;
+const BODY_HALF=0.166;           // 腕を含む体の半幅(身長比)
+const NEAR=0.05;
+
+const st={sensor:'ff',aspect:'16:9',portrait:false,focal:50,dist:3,angle:'eye',camH:1.58,
+  count:1,gap:20,height:170,mode:'finder',thirds:true};
+const $=id=>document.getElementById(id);
+const STORE='lens-sim-settings-v1';
+const KEYS=['sensor','aspect','portrait','focal','dist','angle','camH','count','gap','height','mode','thirds'];
+try{const saved=JSON.parse(localStorage.getItem(STORE)||'null');
+  if(saved){KEYS.forEach(k=>{if(k in saved)st[k]=saved[k]});
+    if(saved.custom){const c=SENSORS.find(s=>s.id==='custom');c.w=+saved.custom.w||36;c.h=+saved.custom.h||24}}}catch(e){}
+function save(){try{const c=SENSORS.find(s=>s.id==='custom');const o={custom:{w:c.w,h:c.h}};KEYS.forEach(k=>o[k]=st[k]);localStorage.setItem(STORE,JSON.stringify(o))}catch(e){}}
+
+// ---------- controls ----------
+const sel=$('sensor');
+SENSORS.forEach(s=>{const o=document.createElement('option');o.value=s.id;o.textContent=s.name;sel.appendChild(o)});
+sel.value=st.sensor;
+{const c=SENSORS.find(s=>s.id==='custom');$('cw').value=c.w;$('ch').value=c.h;$('custom').hidden=st.sensor!=='custom';$('thirds').checked=st.thirds;}
+ASPECTS.forEach(a=>{const b=document.createElement('button');b.textContent=a.id;b.dataset.v=a.id;b.onclick=()=>{st.aspect=a.id;update()};$('aspects').appendChild(b)});
+
+const logTo=(v,a,b)=>Math.round(Math.log(v/a)/Math.log(b/a)*1000);
+const logFrom=(t,a,b)=>a*Math.pow(b/a,t/1000);
+function chips(el,vals,label,onPick,cls){
+  vals.forEach(v=>{const b=document.createElement('button');b.className='chip'+(cls?' '+cls:'');b.textContent=label(v);b.dataset.v=typeof v==='object'?v.id:v;b.onclick=()=>onPick(v);el.appendChild(b)});
+}
+chips($('focal-chips'),FOCALS,v=>v+'mm',v=>{st.focal=v;update()});
+chips($('dist-chips'),DISTS,v=>v+'m',v=>{st.dist=v;update()});
+chips($('angle-chips'),ANGLES,a=>a.name,a=>{st.angle=a.id;update()},'jp');
+
+const clamp=(v,a,b)=>Math.min(b,Math.max(a,v));
+$('focal').oninput=e=>{st.focal=Math.round(logFrom(+e.target.value,F_MIN,F_MAX));update('slider')};
+$('dist').oninput=e=>{const d=logFrom(+e.target.value,D_MIN,D_MAX);st.dist=d<2?Math.round(d*20)/20:d<10?Math.round(d*10)/10:Math.round(d);update('slider')};
+$('focal-n').onchange=e=>{const v=parseFloat(e.target.value);if(v>0)st.focal=clamp(v,F_MIN,F_MAX);update()};
+$('dist-n').onchange=e=>{const v=parseFloat(e.target.value);if(v>0)st.dist=clamp(v,D_MIN,D_MAX);update()};
+$('angle-n').onchange=e=>{const v=parseFloat(e.target.value);if(v>0){st.camH=clamp(v,0.1,20);st.angle='custom'}update()};
+$('count').oninput=e=>{st.count=+e.target.value;update()};
+$('count-n').onchange=e=>{const v=parseInt(e.target.value);if(v>0)st.count=clamp(v,1,15);update()};
+$('gap').oninput=e=>{st.gap=+e.target.value;update()};
+$('gap-n').onchange=e=>{const v=parseFloat(e.target.value);if(!isNaN(v))st.gap=clamp(v,0,500);update()};
+$('height-n').onchange=e=>{const v=parseFloat(e.target.value);if(v>0)st.height=clamp(v,50,220);update()};
+sel.onchange=()=>{st.sensor=sel.value;$('custom').hidden=st.sensor!=='custom';update()};
+$('cw').onchange=$('ch').onchange=()=>{const c=SENSORS.find(s=>s.id==='custom');c.w=Math.max(1,+$('cw').value||36);c.h=Math.max(1,+$('ch').value||24);update()};
+$('o-land').onclick=()=>{st.portrait=false;update()};
+$('o-port').onclick=()=>{st.portrait=true;update()};
+$('thirds').onchange=e=>{st.thirds=e.target.checked;draw();save()};
+$('tab-finder').onclick=$('m-finder').onclick=()=>{st.mode='finder';update()};
+$('tab-overview').onclick=$('m-overview').onclick=()=>{st.mode='overview';update()};
+
+// ---------- math ----------
+function frameCenterY(H,h){ return Math.max(h-0.4*H, Math.min(h*0.5, H*0.45)); }
+function framing(H,h){
+  const r=H/h;
+  if(!isFinite(r)) return '—';
+  if(r<0.12) return '顔のアップ(目元)';
+  if(r<0.24) return 'クローズアップ(顔)';
+  if(r<0.38) return 'バストショット';
+  if(r<0.55) return 'ウエストショット';
+  if(r<0.8)  return 'ニーショット';
+  if(r<1.25) return 'フルショット(全身)';
+  if(r<3)    return 'ロングショット';
+  return '遠景(人物は小さい)';
+}
+
+function calc(){
+  const s=SENSORS.find(x=>x.id===st.sensor);
+  const sw0=Math.max(s.w,s.h),sh0=Math.min(s.w,s.h);
+  const r=ASPECTS.find(a=>a.id===st.aspect).r;
+  let aw,ah; if(r>=sw0/sh0){aw=sw0;ah=sw0/r}else{ah=sh0;aw=sh0*r}
+  if(st.portrait)[aw,ah]=[ah,aw];
+  const f=st.focal,d=st.dist,dmm=d*1000;
+  const b=dmm>f*1.05?1/(1/f-1/dmm):f*21;   // 像距離 (mm)
+  const h=st.height/100;
+  const camH=st.angle==='custom'?st.camH:ANGLES.find(a=>a.id===st.angle).hf(h);
+  st.camH=camH;
+  const H0=ah*d/b, W0=aw*d/b;                // 水平に構えたときの被写体面での範囲 (m)
+  const ty=frameCenterY(H0,h);
+  const pitch=Math.atan2(camH-ty,d);         // +で下向き
+  const cp=Math.cos(pitch),sp=Math.sin(pitch);
+  const cam=(x,y,z)=>{const ry=y-camH;return [x, ry*cp+z*sp, -ry*sp+z*cp]};
+  // センサー上の点 (u,v) を通る光線と被写体面 z=d の交点
+  const hit=(u,v)=>{const dy=v*cp-b*sp, dz=v*sp+b*cp; if(dz<=1e-6)return null; const t=d/dz; return [t*u, camH+t*dy]};
+  const top=hit(0,ah/2),bot=hit(0,-ah/2);
+  const H=top&&bot?top[1]-bot[1]:Infinity;
+  const W=W0/cp;
+  const corners=[hit(-aw/2,ah/2),hit(aw/2,ah/2),hit(aw/2,-ah/2),hit(-aw/2,-ah/2)];
+  // 人物の並び
+  const N=st.count, pitchX=2*BODY_HALF*h+st.gap/100;
+  const xs=Array.from({length:N},(_,i)=>(i-(N-1)/2)*pitchX);
+  const groupW=(N-1)*pitchX+2*BODY_HALF*h;
+  let inFrame=0;
+  xs.forEach(x=>{const y=0.75*h;const a=cam(x-BODY_HALF*h,y,d),c=cam(x+BODY_HALF*h,y,d);
+    if(a[2]>0&&c[2]>0&&Math.abs(b*a[0]/a[2])<=aw/2&&Math.abs(b*c[0]/c[2])<=aw/2)inFrame++});
+  const deg=x=>2*Math.atan(x/(2*b))*180/Math.PI;
+  const crop=FF_DIAG/Math.hypot(sw0,sh0);
+  return {aw,ah,f,b,d,h,camH,pitch,cam,W,H,corners,xs,groupW,inFrame,N,
+    eq:f*crop,crop,aovH:deg(aw),aovV:deg(ah),r};
+}
+
+const fmtLen=m=>!isFinite(m)?'—':m<1?(m*100).toFixed(m<0.1?1:0)+'<small> cm</small>':m<10?m.toFixed(2)+'<small> m</small>':m.toFixed(1)+'<small> m</small>';
+const fmtLenTxt=m=>!isFinite(m)?'—':m<1?(m*100).toFixed(0)+'cm':m<10?m.toFixed(2)+'m':m.toFixed(1)+'m';
+function angleText(C){
+  const deg=C.pitch*180/Math.PI;
+  if(Math.abs(deg)<0.5) return '水平';
+  return (deg>0?'下向き ':'上向き ')+Math.abs(deg).toFixed(1)+'°';
+}
+function angleName(){
+  if(st.angle==='custom')return 'カスタム';
+  return ANGLES.find(a=>a.id===st.angle).name;
+}
+
+// ---------- update ----------
+const MOBILE=matchMedia('(max-width:860px)');
+const cv=$('cv'),ctx=cv.getContext('2d'),box=$('box');
+let C=null;
+
+function update(src){
+  C=calc();
+  if(src!=='slider'){$('focal').value=logTo(st.focal,F_MIN,F_MAX);$('dist').value=logTo(st.dist,D_MIN,D_MAX)}
+  $('focal-n').value=+st.focal.toFixed(1);
+  $('dist-n').value=+st.dist.toFixed(2);
+  $('angle-n').value=+st.camH.toFixed(2);
+  $('count').value=st.count;$('count-n').value=st.count;
+  $('gap').value=Math.min(200,st.gap);$('gap-n').value=st.gap;
+  $('height-n').value=st.height;
+  const press=(sel,fn)=>document.querySelectorAll(sel).forEach(b=>b.setAttribute('aria-pressed',fn(b.dataset.v)));
+  press('#focal-chips .chip',v=>+v===st.focal);
+  press('#dist-chips .chip',v=>+v===st.dist);
+  press('#angle-chips .chip',v=>v===st.angle);
+  press('#aspects button',v=>v===st.aspect);
+  $('o-land').setAttribute('aria-pressed',!st.portrait);$('o-port').setAttribute('aria-pressed',st.portrait);
+  $('tab-finder').setAttribute('aria-pressed',st.mode==='finder');$('tab-overview').setAttribute('aria-pressed',st.mode==='overview');$('m-finder').setAttribute('aria-pressed',st.mode==='finder');$('m-overview').setAttribute('aria-pressed',st.mode==='overview');
+
+  const ar=st.mode==='finder'?C.aw/C.ah:16/10;
+  box.style.aspectRatio=ar;
+  box.style.maxWidth=`calc(${MOBILE.matches?36:66}vh * ${ar})`;
+
+  $('evf').innerHTML=`<span><b>${+C.f.toFixed(1)}mm</b></span><span>換算 ${Math.round(C.eq)}mm</span><span>${st.aspect}</span><span>距離 ${fmtLenTxt(st.dist)}</span><span>${angleName()}</span><span>${st.count}人</span>`;
+  const cut=C.inFrame<C.N;
+  $('stats').innerHTML=[
+    ['撮影範囲(幅×高さ)',`${fmtLen(C.W)} × ${fmtLen(C.H)}`,'hl'],
+    ['写り方',framing(C.H,C.h),'hl'],
+    ['フレームに収まる人数',`${C.inFrame}<small> / ${C.N} 人</small>`,cut?'warn':''],
+    ['並びの全幅',fmtLen(C.groupW)],
+    ['アングル',`${fmtLenTxt(C.camH)}<small> / ${angleText(C)}</small>`],
+    ['35mm判換算',`${Math.round(C.eq)}<small> mm</small>`],
+    ['画角(水平/垂直)',`${C.aovH.toFixed(1)}° / ${C.aovV.toFixed(1)}°`],
+    ['使用センサー範囲',`${C.aw.toFixed(1)} × ${C.ah.toFixed(1)}<small> mm</small>`]
+  ].map(([k,v,c])=>`<div class="stat ${c||''}"><div class="k">${k}</div><div class="v">${v}</div></div>`).join('');
+  draw();drawTop();drawSide();save();
+}
+
+function css(n){return getComputedStyle(document.documentElement).getPropertyValue(n).trim()}
+
+// ---------- 人物の形(身長比、足元 y=0、中心 x=0) ----------
+const LEG=[[0.098,0.53],[0.012,0.53],[0.022,0.28],[0.026,0.045],[0.02,0],[0.085,0],[0.062,0.045],[0.074,0.28]];
+const TORSO=[[-0.1,0.53],[0.1,0.53],[0.086,0.62],[0.11,0.75],[0.128,0.808],[0.03,0.835],[0.03,0.87],[-0.03,0.87],[-0.03,0.835],[-0.128,0.808],[-0.11,0.75],[-0.086,0.62]];
+const ARM=[[0.118,0.795],[0.14,0.62],[0.132,0.45]];
+const HEAD=Array.from({length:28},(_,i)=>{const a=i/28*Math.PI*2;return [Math.cos(a)*0.057,0.933+Math.sin(a)*0.068]});
+const SHAPES=[LEG.map(([x,y])=>[-x,y]),LEG,TORSO,HEAD];
+
+// map: (x,y) in meters on the subject plane → [px,py] or null;  lw: meters → px at that person
+function drawPerson(map,lw,cx,h){
+  const fill=css('--person'),edge=css('--person-edge');
+  ctx.lineJoin='round';ctx.lineCap='round';
+  const path=pts=>{ctx.beginPath();let ok=true;pts.forEach(([x,y],i)=>{const p=map(cx+x*h,y*h);if(!p){ok=false;return}i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1])});return ok};
+  // 輪郭(重なりの区別用)
+  ctx.strokeStyle=edge;ctx.lineWidth=0.052*h*lw+2.5;
+  [-1,1].forEach(m=>{if(path(ARM.map(([x,y])=>[m*x,y])))ctx.stroke()});
+  ctx.lineWidth=Math.max(1,0.012*h*lw)+2.5;
+  SHAPES.forEach(s=>{if(path(s)){ctx.closePath();ctx.stroke()}});
+  // 本体
+  ctx.fillStyle=fill;ctx.strokeStyle=fill;
+  SHAPES.forEach(s=>{if(path(s)){ctx.closePath();ctx.fill();ctx.lineWidth=Math.max(1,0.012*h*lw);ctx.stroke()}});
+  ctx.lineWidth=0.052*h*lw;
+  [-1,1].forEach(m=>{if(path(ARM.map(([x,y])=>[m*x,y])))ctx.stroke()});
+}
+
+function niceStep(span){const s=[0.05,0.1,0.25,0.5,1,2,5,10,20,50];return s.find(v=>span/v<=10)||100}
+
+// ---------- canvas ----------
+function draw(){
+  if(!C)return;
+  const dpr=window.devicePixelRatio||1, Wp=box.clientWidth, Hp=box.clientHeight;
+  if(!Wp||!Hp)return;
+  cv.width=Math.round(Wp*dpr);cv.height=Math.round(Hp*dpr);
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  if(st.mode==='finder')drawFinder(Wp,Hp);else drawOverview(Wp,Hp);
+}
+
+function drawFinder(Wp,Hp){
+  const {aw,ah,b,cam,d,h}=C, k=Wp/aw;
+  const toPx=(c)=>[Wp/2+b*c[0]/c[2]*k, Hp/2-b*c[1]/c[2]*k];
+  // 背景
+  ctx.fillStyle=css('--scene-wall');ctx.fillRect(0,0,Wp,Hp);
+  // 床(カメラ座標で近接面クリップ)
+  const L=3000;
+  const floor=clipPoly([cam(-L,0,NEAR),cam(L,0,NEAR),cam(L,0,L),cam(-L,0,L)]);
+  if(floor.length>2){ctx.fillStyle=css('--scene-floor');ctx.beginPath();floor.forEach((c,i)=>{const p=toPx(c);i?ctx.lineTo(...p):ctx.moveTo(...p)});ctx.closePath();ctx.fill()}
+  // 床グリッド
+  const step=niceStep(Math.max(1,isFinite(C.H)?C.H:d));
+  const xr=Math.max(C.W,C.groupW)*1.5+step*4, zMax=d+step*40;
+  ctx.strokeStyle=css('--scene-grid');ctx.lineWidth=1;ctx.beginPath();
+  const seg=(a,c)=>{const s=clipSeg(a,c);if(s){ctx.moveTo(...toPx(s[0]));ctx.lineTo(...toPx(s[1]))}};
+  let n=0;
+  for(let x=Math.ceil(-xr/step)*step;x<=xr&&n<240;x+=step,n++)seg(cam(x,0,0),cam(x,0,zMax));
+  n=0;for(let z=step;z<=zMax&&n<240;z+=step,n++)seg(cam(-xr,0,z),cam(xr,0,z));
+  ctx.stroke();
+  // 人物
+  const lwAt=(x)=>{const c=cam(x,0.75*h,d);return b*k/c[2]};
+  C.xs.forEach(x=>{
+    const map=(px,py)=>{const c=cam(px,py,d);return c[2]>NEAR?toPx(c):null};
+    drawPerson(map,lwAt(x),x,h);
+  });
+  finderOverlay(Wp,Hp);
+  legend(Wp,Hp,`床グリッド ${step>=1?step+'m':Math.round(step*100)+'cm'}`);
+}
+
+function drawOverview(Wp,Hp){
+  const {h,W,H,corners,xs,groupW}=C;
+  const lim=v=>clamp(v,-400,400);
+  const cs=corners.filter(Boolean).map(([x,y])=>[lim(x),lim(y)]);
+  let x0=-groupW/2-0.2,x1=groupW/2+0.2,y0=-0.15,y1=h*1.15;
+  cs.forEach(([x,y])=>{x0=Math.min(x0,x);x1=Math.max(x1,x);y0=Math.min(y0,y);y1=Math.max(y1,y)});
+  let w=(x1-x0)*1.1,hh=(y1-y0)*1.12,cx=(x0+x1)/2,cy=(y0+y1)/2;
+  const ar=Wp/Hp; if(w/hh>ar)hh=w/ar;else w=hh*ar;
+  const vp={x0:cx-w/2,x1:cx+w/2,y0:cy-hh/2,y1:cy+hh/2};
+  const s=Wp/(vp.x1-vp.x0), X=x=>(x-vp.x0)*s, Y=y=>(vp.y1-y)*s;
+  ctx.fillStyle=css('--scene-wall');ctx.fillRect(0,0,Wp,Hp);
+  const gy=Y(0);
+  if(gy<Hp){ctx.fillStyle=css('--scene-floor');ctx.fillRect(0,Math.max(0,gy),Wp,Hp-Math.max(0,gy))}
+  const step=niceStep(vp.y1-vp.y0);
+  ctx.strokeStyle=css('--scene-grid');ctx.lineWidth=1;ctx.beginPath();
+  for(let x=Math.ceil(vp.x0/step)*step;x<=vp.x1;x+=step){ctx.moveTo(Math.round(X(x))+.5,0);ctx.lineTo(Math.round(X(x))+.5,Hp)}
+  for(let y=Math.ceil(vp.y0/step)*step;y<=vp.y1;y+=step){ctx.moveTo(0,Math.round(Y(y))+.5);ctx.lineTo(Wp,Math.round(Y(y))+.5)}
+  ctx.stroke();
+  xs.forEach(x=>drawPerson((px,py)=>[X(px),Y(py)],s,x,h));
+  if(cs.length===4){
+    ctx.save();ctx.fillStyle=css('--shade');ctx.beginPath();ctx.rect(0,0,Wp,Hp);
+    cs.forEach(([x,y],i)=>i?ctx.lineTo(X(x),Y(y)):ctx.moveTo(X(x),Y(y)));ctx.closePath();
+    ctx.fill('evenodd');ctx.restore();
+    ctx.strokeStyle=css('--frame');ctx.lineWidth=2;ctx.beginPath();
+    cs.forEach(([x,y],i)=>i?ctx.lineTo(X(x),Y(y)):ctx.moveTo(X(x),Y(y)));ctx.closePath();ctx.stroke();
+    ctx.fillStyle=css('--frame');ctx.font=`500 12px ${css('--font-mono')}`;ctx.textBaseline='bottom';
+    const label=`${fmtLenTxt(W)} × ${fmtLenTxt(H)}`;
+    const lx=X(Math.min(cs[0][0],cs[3][0])),ly=Y(Math.max(cs[0][1],cs[1][1]));
+    ctx.fillText(label,clamp(lx+4,4,Wp-ctx.measureText(label).width-4),Math.max(16,ly-4));
+  }
+  legend(Wp,Hp,`グリッド ${step>=1?step+'m':Math.round(step*100)+'cm'}`);
+}
+
+function legend(Wp,Hp,t){
+  ctx.font=`11px ${css('--font-mono')}`;ctx.textBaseline='alphabetic';
+  ctx.fillStyle='rgba(0,0,0,.5)';const tw=ctx.measureText(t).width;
+  ctx.fillRect(Wp-tw-14,Hp-22,tw+10,18);ctx.fillStyle='#e8ecef';ctx.fillText(t,Wp-tw-9,Hp-9);
+}
+
+function clipPoly(pts){
+  const out=[];
+  for(let i=0;i<pts.length;i++){
+    const a=pts[i],c=pts[(i+1)%pts.length],ia=a[2]>=NEAR,ic=c[2]>=NEAR;
+    if(ia)out.push(a);
+    if(ia!==ic){const t=(NEAR-a[2])/(c[2]-a[2]);out.push([a[0]+t*(c[0]-a[0]),a[1]+t*(c[1]-a[1]),NEAR])}
+  }
+  return out;
+}
+function clipSeg(a,c){
+  if(a[2]<NEAR&&c[2]<NEAR)return null;
+  if(a[2]>=NEAR&&c[2]>=NEAR)return [a,c];
+  const t=(NEAR-a[2])/(c[2]-a[2]),p=[a[0]+t*(c[0]-a[0]),a[1]+t*(c[1]-a[1]),NEAR];
+  return a[2]>=NEAR?[a,p]:[p,c];
+}
+
+function finderOverlay(Wp,Hp){
+  ctx.save();
+  ctx.strokeStyle='rgba(255,255,255,.55)';ctx.lineWidth=1;
+  if(st.thirds){ctx.beginPath();
+    for(let i=1;i<3;i++){ctx.moveTo(Math.round(Wp*i/3)+.5,0);ctx.lineTo(Math.round(Wp*i/3)+.5,Hp);ctx.moveTo(0,Math.round(Hp*i/3)+.5);ctx.lineTo(Wp,Math.round(Hp*i/3)+.5)}
+    ctx.stroke()}
+  const c=Math.min(Wp,Hp)*0.06,m=8;ctx.strokeStyle='rgba(255,255,255,.85)';ctx.lineWidth=2;ctx.beginPath();
+  [[m,m,1,1],[Wp-m,m,-1,1],[m,Hp-m,1,-1],[Wp-m,Hp-m,-1,-1]].forEach(([x,y,dx,dy])=>{ctx.moveTo(x+dx*c,y);ctx.lineTo(x,y);ctx.lineTo(x,y+dy*c)});
+  ctx.stroke();
+  const a=Math.min(Wp,Hp)*0.05;ctx.strokeStyle='rgba(242,184,28,.9)';ctx.lineWidth=1.5;ctx.strokeRect(Wp/2-a,Hp/2-a*0.75,a*2,a*1.5);
+  ctx.restore();
+}
+
+// ---------- diagrams ----------
+const MONO='font-family="IBM Plex Mono,monospace"';
+function ticksSvg(range,sc,ox,y,VW){
+  const tick=[0.5,1,2,5,10,20,50].find(v=>range/v<=6)||100;let s='';
+  for(let t=tick;ox+t*sc<VW-10;t+=tick){const x=ox+t*sc;s+=`<line x1="${x}" x2="${x}" y1="${y}" y2="${y+4}" stroke="var(--muted)"/><text x="${x}" y="${y+15}" font-size="10" text-anchor="middle" fill="var(--muted)" ${MONO}>${t}m</text>`}
+  return s;
+}
+function drawTop(){
+  const svg=$('td'),VW=600,VH=200,cx=40,cy=(VH-20)/2;
+  const {aw,b,d,h,xs,groupW,W}=C;
+  const rangeZ=Math.max(d*1.25,1);
+  const sc=Math.min((VW-cx-30)/rangeZ,(VH-50)/Math.max(groupW*1.1,0.5));
+  const half=Math.atan(aw/(2*b)),L=VW*3;
+  const ex=cx+L, ey=Math.tan(half)*L;
+  const px=cx+d*sc, wh=W/2*sc;
+  const r=clamp(BODY_HALF*h*sc,2.5,9);
+  const dots=xs.map(x=>`<circle cx="${px}" cy="${cy+x*sc}" r="${r}" fill="var(--person)"/>`).join('');
+  svg.innerHTML=`
+  <defs><clipPath id="clipT"><rect x="0" y="0" width="${VW}" height="${VH-22}"/></clipPath></defs>
+  <g clip-path="url(#clipT)">
+    <path d="M${cx} ${cy} L${ex} ${cy-ey} L${ex} ${cy+ey} Z" fill="var(--frame)" fill-opacity=".14" stroke="var(--frame)" stroke-width="1.5"/>
+    <line x1="${cx}" y1="${cy}" x2="${VW}" y2="${cy}" stroke="var(--line)" stroke-dasharray="3 4"/>
+    ${wh<VH?`<line x1="${px}" y1="${cy-wh}" x2="${px}" y2="${cy+wh}" stroke="var(--accent)" stroke-width="2"/>`:''}
+    ${dots}
+  </g>
+  <rect x="${cx-22}" y="${cy-9}" width="18" height="18" rx="3" fill="var(--ink)"/>
+  <rect x="${cx-5}" y="${cy-6}" width="6" height="12" fill="var(--ink)"/>
+  <line x1="${cx}" x2="${VW-10}" y1="${VH-22}" y2="${VH-22}" stroke="var(--muted)"/>
+  ${ticksSvg(rangeZ,sc,cx,VH-22,VW)}
+  <text x="${VW-10}" y="14" font-size="11" text-anchor="end" fill="var(--muted)" ${MONO}>水平画角 ${C.aovH.toFixed(1)}° / 幅 ${fmtLenTxt(W)}</text>`;
+}
+function drawSide(){
+  const svg=$('sd'),VW=600,VH=200,cx=40,gy=VH-22;
+  const {ah,b,d,h,camH,pitch}=C;
+  const rangeZ=Math.max(d*1.25,1);
+  const sc=Math.min((VW-cx-30)/rangeZ,(gy-24)/Math.max(camH*1.15,h*1.15));
+  const camY=gy-camH*sc, half=Math.atan(ah/(2*b)), L=VW*3;
+  const aT=-pitch+half, aB=-pitch-half;      // 水平からの角度(上が+)
+  const pt=a=>`${cx+Math.cos(a)*L} ${camY-Math.sin(a)*L}`;
+  const aim=`${cx+Math.cos(-pitch)*L} ${camY-Math.sin(-pitch)*L}`;
+  const px=cx+d*sc, ph=h*sc, hw=Math.max(3,0.06*h*sc);
+  const head=Math.max(2.5,0.065*h*sc);
+  svg.innerHTML=`
+  <defs><clipPath id="clipS"><rect x="0" y="0" width="${VW}" height="${gy}"/></clipPath></defs>
+  <g clip-path="url(#clipS)">
+    <path d="M${cx} ${camY} L${pt(aT)} L${pt(aB)} Z" fill="var(--frame)" fill-opacity=".14" stroke="var(--frame)" stroke-width="1.5"/>
+    <path d="M${cx} ${camY} L${aim}" stroke="var(--frame)" stroke-dasharray="3 4" fill="none"/>
+    <rect x="${px-hw}" y="${gy-ph+head*2}" width="${hw*2}" height="${ph-head*2}" rx="${hw}" fill="var(--person)"/>
+    <circle cx="${px}" cy="${gy-ph+head}" r="${head}" fill="var(--person)"/>
+  </g>
+  <line x1="0" x2="${VW}" y1="${gy}" y2="${gy}" stroke="var(--muted)"/>
+  <line x1="${cx}" x2="${cx}" y1="${gy}" y2="${camY}" stroke="var(--muted)" stroke-dasharray="2 3"/>
+  <rect x="${cx-22}" y="${camY-9}" width="18" height="18" rx="3" fill="var(--ink)"/>
+  <rect x="${cx-5}" y="${camY-6}" width="6" height="12" fill="var(--ink)"/>
+  ${ticksSvg(rangeZ,sc,cx,gy,VW)}
+  <text x="${VW-10}" y="14" font-size="11" text-anchor="end" fill="var(--muted)" ${MONO}>カメラ高 ${fmtLenTxt(camH)} / ${angleText(C)}</text>`;
+}
+
+new ResizeObserver(()=>draw()).observe(box);
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change',()=>draw());
+new MutationObserver(()=>draw()).observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']});
+document.fonts&&document.fonts.ready.then(()=>draw());
+MOBILE.addEventListener('change',()=>update());
+update();
+if('serviceWorker' in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(()=>{}))}
+</script>
+</body>
+</html>
